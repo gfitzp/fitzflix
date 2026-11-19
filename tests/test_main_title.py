@@ -4,6 +4,8 @@ A film with a selected title shows that title on the pages. The record
 also holds the main title of TMDB. The searches and the frame game find
 the film by each of the 2 titles."""
 
+from datetime import datetime
+
 import pytest
 
 from app import db
@@ -119,6 +121,67 @@ def test_a_new_record_of_a_tmdb_film_starts_with_the_main_title(app):
         assert (movie.tmdb_title, movie.tmdb_main_title) == (MAIN, MAIN)
 
 
+def test_the_survivor_of_a_merge_has_the_main_title_of_the_payload(app):
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+    from tests.test_chosen_title import on_disk, packed, second_applies
+
+    with app.app_context():
+        older = make_movie(MAIN, 1971, tmdb_id=TMDB_ID)
+        older.date_created = datetime(2020, 1, 1)
+        younger = film()
+        younger.date_created = datetime(2024, 1, 1)
+        db.session.commit()
+        on_disk(app, make_movie_file(younger, "Bluray-1080p"))
+        older_id, younger_id = older.id, younger.id
+        applied = apply_tmdb_refresh(
+            "Movies", younger_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+        )
+        assert applied is True
+        for job in second_applies(app):
+            assert apply_tmdb_refresh(**job) is True
+        db.session.expire_all()
+        assert db.session.get(Movie, younger_id) is None
+        kept = db.session.get(Movie, older_id)
+        assert (kept.title, kept.tmdb_title) == (SELECTED, SELECTED)
+        assert kept.tmdb_main_title == MAIN
+
+
+def test_a_record_with_a_new_tmdb_id_gets_the_main_title_of_that_film(app):
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    from tests.test_chosen_title import packed
+
+    with app.app_context():
+        movie = make_movie(
+            "Gamma Selected",
+            1971,
+            tmdb_id=77,
+            chosen_title="Gamma Selected",
+            tmdb_title="Gamma Selected",
+            tmdb_main_title="Gamma Main",
+        )
+        db.session.commit()
+        movie_id = movie.id
+        applied = apply_tmdb_refresh(
+            "Movies",
+            movie_id,
+            tmdb_id=TMDB_ID,
+            tmdb_payload=packed(payload()),
+            rematch=True,
+        )
+        assert applied is True
+        db.session.expire_all()
+        movie = db.session.get(Movie, movie_id)
+        assert (movie.tmdb_id, movie.chosen_title) == (TMDB_ID, None)
+        assert (movie.title, movie.tmdb_title, movie.tmdb_main_title) == (
+            MAIN,
+            MAIN,
+            MAIN,
+        )
+
+
 # The searches
 
 
@@ -132,6 +195,18 @@ def test_the_search_finds_a_film_by_its_main_title(app, admin_client):
         assert f">{SELECTED} (" in page, query
         data = admin_client.get(f"/search.json?q={query}").get_json()
         assert [row["title"] for row in data["results"]] == [f"{SELECTED} (1971)"]
+
+
+def test_the_year_of_a_search_applies_to_a_match_of_the_main_title(app, admin_client):
+    with app.app_context():
+        make_movie_file(film(), "Bluray-1080p")
+        db.session.commit()
+
+    data = admin_client.get("/search.json?q=fistful+y:1971").get_json()
+    assert [row["title"] for row in data["results"]] == [f"{SELECTED} (1971)"]
+    assert admin_client.get("/search.json?q=fistful+y:1980").get_json() == {
+        "results": []
+    }
 
 
 @pytest.mark.parametrize(
@@ -184,6 +259,17 @@ def test_the_shopping_search_finds_a_film_by_its_main_title(app, admin_client):
         assert f"{SELECTED} (1971)" in page, query
 
 
+def test_the_shopping_search_finds_an_owned_film_by_its_main_title(app, admin_client):
+    with app.app_context():
+        make_movie_file(film(), "DVD")
+        db.session.commit()
+
+    page = admin_client.get("/shopping-list/movie?q=fistful+dynamite").get_data(
+        as_text=True
+    )
+    assert f"{SELECTED} (1971)" in page
+
+
 def test_the_watchlist_search_finds_a_film_by_its_main_title(app, admin_client):
     from app.models import User, UserWatchlist
 
@@ -200,6 +286,9 @@ def test_the_watchlist_search_finds_a_film_by_its_main_title(app, admin_client):
         page = admin_client.get(
             f"/shopping-list/movie?library=watchlist&q={query}"
         ).get_data(as_text=True)
+        assert SELECTED in page, query
+        assert "Delta Wanted Other" not in page
+        page = admin_client.get(f"/watchlist?q={query}").get_data(as_text=True)
         assert SELECTED in page, query
         assert "Delta Wanted Other" not in page
 

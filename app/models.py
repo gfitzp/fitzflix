@@ -545,7 +545,7 @@ class Movie(db.Model, TMDBMixin):
     # The main title of TMDB. tmdb_title is the title that the pages
     # show, and it holds the selected title of a film that has one
     # (chosen_title). Thus, only this column has the main title of such
-    # a film. A search matches the 2 columns (movie_title_like).
+    # a film. A search matches each title column (movie_title_like).
 
     tmdb_main_title = db.Column(db.String(256))
 
