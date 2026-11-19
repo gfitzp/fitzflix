@@ -1042,9 +1042,20 @@ def _apply_movie_refresh(
             return False
         locks.append(lock)
 
+    # The record that a merge deletes can hold the name that the
+    # survivor gets. The title and the year of a film are unique. Thus,
+    # the survivor cannot take the name before the delete.
+
+    waits_for_the_name = False
     if existing_movie:
+        leaving = movie if existing_movie.id != movie.id else None
+        if leaving is not None and names and names[0][0]:
+            holder = Movie.query.filter(
+                Movie.title == names[0][0], Movie.year == names[0][1]
+            ).first()
+            waits_for_the_name = holder is not None and holder.id == leaving.id
         movie = existing_movie
-        existing_movie.tmdb_movie_apply(tmdb_info)
+        existing_movie.tmdb_movie_apply(tmdb_info, leaving=leaving)
         db.session.commit()
     else:
         movie.tmdb_movie_apply(tmdb_info)
@@ -1181,13 +1192,12 @@ def _apply_movie_refresh(
         original_movie_record = Movie.query.filter_by(id=original_movie_id).first()
         db.session.delete(original_movie_record)
 
-        # The record that goes can hold the selected name until this
-        # delete. Then the survivor could not take the name in this
-        # apply. A second refresh gives it the name. Only a merge
-        # queues it, and a merge deletes 1 record. Thus, it cannot
-        # repeat.
+        # The record that goes held the name of the survivor until
+        # this delete. A second refresh gives the survivor the name.
+        # Only a merge queues it, and a merge deletes 1 record. Thus,
+        # it cannot repeat.
 
-        if movie.chosen_title and movie.title != movie.chosen_title:
+        if waits_for_the_name:
             enqueue_task(
                 "app.metadata.tmdb_refresh.refresh_tmdb_info",
                 MOVIES,

@@ -705,13 +705,17 @@ class TMDBMixin(object):
             )
             self.chosen_title = None
 
-    def tmdb_movie_apply(self, tmdb_info):
+    def tmdb_movie_apply(self, tmdb_info, leaving=None):
         """Do the database half of a TMDB movie refresh.
 
         This method replaces the TMDB fields and associations of this
         movie with the fetched payload. It makes no network calls. The
         artwork is already on disk. Thus, it belongs on the single-worker
-        sql queue, serialized with the other database work."""
+        sql queue, serialized with the other database work.
+
+        leaving is the record that a merge deletes after this apply.
+        That record can hold the name of this movie. Then the merge
+        queues the refresh that gives this movie the name."""
 
         from app.models import Movie, MovieCast, MovieCrew
 
@@ -769,19 +773,23 @@ class TMDBMixin(object):
         ).first()
 
         if duplicate is not None and duplicate is not self:
-            current_app.logger.warning(
-                f"{self} not renamed to '{canonical_title} ({canonical_year})': "
-                f"{duplicate} already has that name; refresh either movie "
-                f"with TMDB id {tmdb_info.get('id')} to merge them"
-            )
-            notify_admin(
-                "Duplicate movie detected",
-                "duplicate_movie",
-                movie=self,
-                duplicate=duplicate,
-                canonical_title=canonical_title,
-                canonical_year=canonical_year,
-            )
+            # The admin has nothing to do about a record that the merge
+            # deletes. Thus, that record gets no warning and no mail.
+
+            if leaving is None or duplicate.id != leaving.id:
+                current_app.logger.warning(
+                    f"{self} not renamed to '{canonical_title} ({canonical_year})': "
+                    f"{duplicate} already has that name; refresh either movie "
+                    f"with TMDB id {tmdb_info.get('id')} to merge them"
+                )
+                notify_admin(
+                    "Duplicate movie detected",
+                    "duplicate_movie",
+                    movie=self,
+                    duplicate=duplicate,
+                    canonical_title=canonical_title,
+                    canonical_year=canonical_year,
+                )
 
         elif canonical_title:
             self.title = canonical_title

@@ -1349,3 +1349,289 @@ def test_the_tmdb_title_is_not_checked_for_the_file_name(app, admin_client, titl
     with app.app_context():
         assert db.session.get(Movie, movie_id).chosen_title is None
         assert len(refresh_jobs(app)) == 1
+
+
+# 2 records of 1 film
+
+
+def two_records(older_title, younger_title, older_chosen=None, younger_chosen=None):
+    """Make 2 records with the TMDB id of the film. Return their ids."""
+
+    from datetime import datetime
+
+    older = make_movie(older_title, 2019, tmdb_id=TMDB_ID, chosen_title=older_chosen)
+    older.tmdb_title = older_title
+    older.date_created = datetime(2020, 1, 1)
+    younger = make_movie(
+        younger_title, 2019, tmdb_id=TMDB_ID, chosen_title=younger_chosen
+    )
+    younger.tmdb_title = younger_title
+    younger.date_created = datetime(2024, 1, 1)
+    db.session.commit()
+    return older.id, younger.id
+
+
+@pytest.fixture
+def mails(monkeypatch):
+    """Record the mails that the apply sends to the admin."""
+
+    from app.metadata import tmdb_apply
+
+    sent = []
+    monkeypatch.setattr(
+        tmdb_apply, "notify_admin", lambda subject, *a, **k: sent.append(subject)
+    )
+    return sent
+
+
+def after_merge_jobs(app):
+    return [
+        job.args
+        for job in app.request_queue.jobs
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
+    ]
+
+
+def test_the_older_record_of_the_film_can_have_the_selected_title(
+    app, admin_client, titles
+):
+    """The refresh of the younger record merges it into the older record."""
+
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records(STREAMING, MAIN)
+
+    response = select(admin_client, younger_id, STREAMING, follow_redirects=True)
+    page = response.get_data(as_text=True)
+    assert "has that title and year already" not in page
+    assert "Selected the title" in page
+    with app.app_context():
+        assert db.session.get(Movie, older_id).chosen_title == STREAMING
+        assert db.session.get(Movie, younger_id).chosen_title == STREAMING
+        assert [job.args for job in refresh_jobs(app)] == [
+            ("Movies", younger_id, TMDB_ID)
+        ]
+
+
+def test_the_younger_record_of_the_film_can_have_the_selected_title(
+    app, admin_client, titles
+):
+    """Only the refresh of a younger record merges. Thus, that record is refreshed."""
+
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records(MAIN, STREAMING)
+
+    response = select(admin_client, older_id, STREAMING)
+    assert response.status_code == 302
+    assert response.headers["Location"].endswith(f"/movie/{older_id}")
+    with app.app_context():
+        assert db.session.get(Movie, older_id).chosen_title == STREAMING
+        assert db.session.get(Movie, younger_id).chosen_title == STREAMING
+        assert [job.args for job in refresh_jobs(app)] == [
+            ("Movies", younger_id, TMDB_ID)
+        ]
+
+
+def test_the_button_ends_the_selection_of_each_record_of_the_film(
+    app, admin_client, titles
+):
+    """A selection that stays on a record would go to the survivor of the merge."""
+
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records(
+            STREAMING, MAIN, older_chosen=STREAMING, younger_chosen="Érase una vez"
+        )
+
+    response = follow(admin_client, older_id, follow_redirects=True)
+    page = response.get_data(as_text=True)
+    assert "has that title and year already" not in page
+    assert "follows the TMDB title again" in page
+    with app.app_context():
+        assert db.session.get(Movie, older_id).chosen_title is None
+        assert db.session.get(Movie, younger_id).chosen_title is None
+        assert [job.args for job in refresh_jobs(app)] == [
+            ("Movies", younger_id, TMDB_ID)
+        ]
+
+
+def test_a_new_selection_replaces_the_selection_of_each_record(
+    app, admin_client, titles
+):
+    """The survivor of a merge keeps its own selection. Thus, it gets the new one."""
+
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records(
+            "Érase una vez", MAIN, older_chosen="Érase una vez"
+        )
+
+    assert select(admin_client, younger_id, STREAMING).status_code == 302
+    with app.app_context():
+        assert db.session.get(Movie, older_id).chosen_title == STREAMING
+        assert db.session.get(Movie, younger_id).chosen_title == STREAMING
+
+
+def test_a_third_record_of_the_film_that_has_the_title_is_refreshed(
+    app, admin_client, titles
+):
+    from datetime import datetime
+
+    with app.app_context():
+        older_id, younger_id = two_records("Oldest Record", MAIN)
+        third = make_movie(STREAMING, 2019, tmdb_id=TMDB_ID)
+        third.date_created = datetime(2025, 1, 1)
+        db.session.commit()
+        third_id = third.id
+
+    response = select(admin_client, younger_id, STREAMING)
+    assert response.headers["Location"].endswith(f"/movie/{older_id}")
+    with app.app_context():
+        assert [job.args for job in refresh_jobs(app)] == [
+            ("Movies", third_id, TMDB_ID)
+        ]
+
+
+@pytest.mark.parametrize("other_tmdb_id", [None, 77])
+def test_a_record_of_another_film_that_has_the_title_refuses(
+    app, admin_client, titles, other_tmdb_id
+):
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records("Oldest Record", MAIN)
+        make_movie(STREAMING, 2019, tmdb_id=other_tmdb_id)
+        db.session.commit()
+
+    response = select(admin_client, younger_id, STREAMING, follow_redirects=True)
+    assert "has that title and year already" in response.get_data(as_text=True)
+    with app.app_context():
+        assert db.session.get(Movie, older_id).chosen_title is None
+        assert db.session.get(Movie, younger_id).chosen_title is None
+        assert refresh_jobs(app) == []
+
+
+def test_a_merge_sends_no_mail_about_the_record_that_it_deletes(app, mails):
+    """The record that goes has the name. A second refresh gives it to the survivor."""
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records(
+            MAIN, STREAMING, older_chosen=STREAMING, younger_chosen=STREAMING
+        )
+        assert (
+            apply_tmdb_refresh(
+                "Movies", younger_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, younger_id) is None
+        assert mails == []
+        assert after_merge_jobs(app) == [("Movies", older_id, TMDB_ID)]
+
+        assert (
+            apply_tmdb_refresh(
+                "Movies", older_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        kept = db.session.get(Movie, older_id)
+        assert (kept.title, kept.chosen_title) == (STREAMING, STREAMING)
+        assert mails == []
+        assert len(after_merge_jobs(app)) == 1
+
+
+def test_a_merge_gives_the_survivor_the_tmdb_title_of_the_record_that_goes(app, mails):
+    """The same applies to a film with no selection."""
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import File, Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records("Older Record", MAIN)
+        file = make_movie_file(db.session.get(Movie, younger_id), "Bluray-1080p")
+        on_disk(app, file)
+        file_id = file.id
+        assert (
+            apply_tmdb_refresh(
+                "Movies", younger_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, younger_id) is None
+        assert db.session.get(Movie, older_id).title == "Older Record"
+        assert mails == []
+        assert after_merge_jobs(app) == [("Movies", older_id, TMDB_ID)]
+
+        assert (
+            apply_tmdb_refresh(
+                "Movies", older_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, older_id).title == MAIN
+        row = db.session.get(File, file_id)
+        assert row.movie_id == older_id
+        assert os.path.exists(os.path.join(app.config["LIBRARY_DIR"], row.file_path))
+        assert mails == []
+        assert len(after_merge_jobs(app)) == 1
+
+
+def test_a_third_record_that_has_the_name_gets_the_mail_and_no_second_refresh(
+    app, mails
+):
+    """The merge does not delete that record. Thus, a second refresh cannot help."""
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records(
+            "Older Record", "Newer Record", older_chosen=STREAMING
+        )
+        make_movie(STREAMING, 2019)
+        db.session.commit()
+        assert (
+            apply_tmdb_refresh(
+                "Movies", younger_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, younger_id) is None
+        assert db.session.get(Movie, older_id).title == "Older Record"
+        assert mails == ["Duplicate movie detected"]
+        assert after_merge_jobs(app) == []
+
+
+def test_a_refresh_that_is_not_a_merge_sends_the_mail_about_the_other_record(
+    app, mails
+):
+    """The older record is not merged by its own refresh. The admin must know."""
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records("Older Record", MAIN)
+        assert (
+            apply_tmdb_refresh(
+                "Movies", older_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, younger_id) is not None
+        assert db.session.get(Movie, older_id).title == "Older Record"
+        assert mails == ["Duplicate movie detected"]

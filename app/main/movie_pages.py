@@ -812,8 +812,9 @@ def _refresh_for_the_title(movie, kept, name, year):
     """Queue the TMDB refresh that gives a film its title, and flash its state.
 
     The refresh renames the record, the folder and the files. The page
-    waits for it, so it goes to the front of the sql queue. kept is the
-    record that the film has after the refresh."""
+    waits for it, so it goes to the front of the sql queue. movie is the
+    record that the refresh starts from. kept is the record that the
+    film has after the refresh."""
 
     refresh_job = enqueue_task(
         "app.metadata.tmdb_refresh.refresh_tmdb_info",
@@ -846,7 +847,12 @@ def movie_title(movie_id):
     The main title ends a selection, and so does the button of the
     page. The button is necessary when TMDB made the selected title its
     main title. A title that another film of the same year has is
-    refused, because the title and the year of a film are unique."""
+    refused, because the title and the year of a film are unique.
+
+    A film can have 2 records with the same TMDB id until a refresh
+    merges them. A record of the same film that has the title does not
+    refuse it. The selection goes to each record of the film, and the
+    refresh that the page queues merges the records."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = movie.display_title
@@ -901,7 +907,7 @@ def movie_title(movie_id):
             )
             return redirect(page_url)
         holder = _name_holder(movie, name, year)
-        if holder is not None:
+        if holder is not None and holder.tmdb_id != movie.tmdb_id:
             flash(
                 f"'{holder.display_title}' has that title and year already. "
                 f"Two films cannot have the same title and year.",
@@ -923,22 +929,30 @@ def movie_title(movie_id):
             )
             return redirect(page_url)
 
-        movie.chosen_title = selected
+        # A merge keeps the selection of its oldest record. Thus, each
+        # record of the film gets the selection.
+
+        records = (
+            Movie.query.filter_by(tmdb_id=movie.tmdb_id)
+            .order_by(Movie.date_created.asc())
+            .all()
+        )
+        for record in records:
+            record.chosen_title = selected
         db.session.commit()
         if selected:
             flash(f"Selected the title '{name}' for this film.", "success")
         else:
             flash("This film follows the TMDB title again.", "success")
         # The oldest record with the TMDB id is the film after the
-        # refresh. The refresh merges a younger record into it, and the
-        # page of the younger record is then gone.
+        # refresh. Only the refresh of a younger record merges it into
+        # the oldest, and the page of the younger record is then gone.
+        # A younger record that has the title must go first, because
+        # the oldest record cannot take the title before.
 
-        kept = (
-            Movie.query.filter_by(tmdb_id=movie.tmdb_id)
-            .order_by(Movie.date_created.asc())
-            .first()
-        )
-        _refresh_for_the_title(movie, kept, name, year)
+        kept = records[0]
+        merged = holder if holder is not None and holder.id != kept.id else movie
+        _refresh_for_the_title(merged, kept, name, year)
         return redirect(url_for("main.movie", movie_id=kept.id))
 
     if request.method == "POST":
