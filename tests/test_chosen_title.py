@@ -511,7 +511,7 @@ def test_a_new_tmdb_id_locks_the_name_of_the_new_film(app, held_lock):
         assert (row.title, row.chosen_title) == ("Gamma Alt", "Gamma Alt")
 
 
-def test_a_merge_with_no_selection_queues_no_second_apply(app):
+def test_a_merge_queues_no_second_apply_when_the_survivor_takes_the_name(app):
     from datetime import datetime
 
     from app.metadata.tmdb_refresh import apply_tmdb_refresh
@@ -523,7 +523,7 @@ def test_a_merge_with_no_selection_queues_no_second_apply(app):
         newer = make_movie("Newer Record", 2019, tmdb_id=TMDB_ID)
         newer.date_created = datetime(2024, 1, 1)
         db.session.commit()
-        newer_id = newer.id
+        survivor_id, newer_id = survivor.id, newer.id
         assert (
             apply_tmdb_refresh(
                 "Movies", newer_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
@@ -532,6 +532,7 @@ def test_a_merge_with_no_selection_queues_no_second_apply(app):
         )
         db.session.expire_all()
         assert db.session.get(Movie, newer_id) is None
+        assert db.session.get(Movie, survivor_id).title == MAIN
         assert second_applies(app) == []
 
 
