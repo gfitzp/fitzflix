@@ -45,6 +45,7 @@ from app.models import (
     UserWatchlist,
     clip_movie_title,
     movie_genres,
+    movie_title_like,
     title_sort,
 )
 from app.main import bp
@@ -154,9 +155,7 @@ def movie_library():
     )
     if q:
         like = q.replace(" ", "%")
-        movies = movies.filter(
-            db.or_(Movie.title.ilike(f"%{like}%"), Movie.tmdb_title.ilike(f"%{like}%"))
-        )
+        movies = movies.filter(movie_title_like(f"%{like}%"))
     elif int(quality) > 0:
         movies = movies.filter(RefQuality.id == int(quality))
     movies = movies.order_by(

@@ -280,6 +280,7 @@ def find_or_create_tmdb_movie(tmdb_id, film_title, year, details=None):
         if release_date is not None:
             title_length = Movie.__table__.c.tmdb_title.type.length
             movie.tmdb_title = (details.get("title") or "")[:title_length] or None
+            movie.tmdb_main_title = movie.tmdb_title
             movie.tmdb_release_date = release_date
         movie.tmdb_overview = movie.tmdb_overview or details.get("overview")
         movie.tmdb_poster_path = movie.tmdb_poster_path or details.get("poster_path")

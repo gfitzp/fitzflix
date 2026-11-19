@@ -56,6 +56,7 @@ from app.main.forms import GuessFrameForm
 from app.main.helpers import decimal_id
 from app.media.title_keys import title_key
 from app.models import (
+    MOVIE_TITLE_COLUMNS,
     File,
     Movie,
     MovieCast,
@@ -356,14 +357,28 @@ def _could_beat(normalized, candidate, score):
     )
 
 
+# The columns of the titles that name a film in the game. These are the
+# titles that a search matches and the original title.
+
+TITLE_COLUMNS = (*MOVIE_TITLE_COLUMNS, "tmdb_original_title")
+
+
+def _titles(movie):
+    """Return each title that names the film (TITLE_COLUMNS).
+
+    Invariant: the game accepts each title that the record has. A film
+    with a selected title also has the main title of TMDB."""
+
+    return tuple(getattr(movie, column) for column in TITLE_COLUMNS)
+
+
 def _title_candidates(movie):
     """Return the titles that name the film, normalized.
 
-        These are the local title, the TMDB title and the original title,
-    with and without a subtitle, and the display title with the
-        year."""
+    These are the titles of the record (_titles), with and without a
+    subtitle, and the display title with the year."""
 
-    titles = (movie.title, movie.tmdb_title, movie.tmdb_original_title)
+    titles = _titles(movie)
     candidates = set(titles) | {movie.display_title}
     for title in titles:
         for separator in (":", " - "):
@@ -383,7 +398,7 @@ def _other_film_scores_higher(normalized, movie, score, x_numeral=True):
 
     rows = (
         db.session.query(
-            Movie.id, Movie.title, Movie.tmdb_title, Movie.tmdb_original_title
+            Movie.id, *(getattr(Movie, column) for column in TITLE_COLUMNS)
         )
         .join(File, File.movie_id == Movie.id)
         .filter(Movie.id != movie.id)
@@ -402,8 +417,8 @@ def _other_film_scores_higher(normalized, movie, score, x_numeral=True):
 def _fuzzy_match(guess, movie):
     """Return True if the guess is close enough to a title of the film.
 
-    The titles are the local title, the TMDB title, and the original
-    title, with and without the year, and with and without a subtitle.
+    The titles are the titles of the record (_titles), with and without
+    the year, and with and without a subtitle.
     The two halves around a ':' (or the filename-safe ' - ') stand
     alone. Thus, 'Rogue One' names 'Rogue One: A Star Wars Story', and
     'Wrath of Khan' names its Star Trek film.
@@ -422,10 +437,7 @@ def _fuzzy_match(guess, movie):
     candidates = _title_candidates(movie)
     film_years = {str(movie.display_year), str(movie.year)}
     title_words = {
-        word
-        for title in (movie.title, movie.tmdb_title, movie.tmdb_original_title)
-        if title
-        for word in _normalize(title).split()
+        word for title in _titles(movie) if title for word in _normalize(title).split()
     }
     if set(YEAR_RE.findall(normalized)) - film_years - title_words:
         return False
@@ -442,7 +454,7 @@ def _fuzzy_match(guess, movie):
     if number is not None:
         title_numbers = {
             _sequel_number(_normalize(title), x_numeral)
-            for title in (movie.title, movie.tmdb_title, movie.tmdb_original_title)
+            for title in _titles(movie)
             if title
         }
         if number in title_numbers:

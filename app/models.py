@@ -542,6 +542,13 @@ class Movie(db.Model, TMDBMixin):
     tmdb_vote_count = db.Column(db.Integer)
     tmdb_data_as_of = db.Column(db.DateTime)
 
+    # The main title of TMDB. tmdb_title is the title that the pages
+    # show, and it holds the selected title of a film that has one
+    # (chosen_title). Thus, only this column has the main title of such
+    # a film. A search matches the 2 columns (movie_title_like).
+
+    tmdb_main_title = db.Column(db.String(256))
+
     # "TMDB has no record of this film, and never will". Examples are a
     # home movie, or an id that TMDB deleted. This is different from a
     # plain NULL tmdb_id. A NULL only means "not matched yet" and starts a
@@ -554,8 +561,9 @@ class Movie(db.Model, TMDBMixin):
 
     # The title that an admin selected from the titles that TMDB lists
     # for the film. While TMDB lists it, title and tmdb_title hold it.
-    # A refresh then does not give the film the main title of TMDB.
-    # NULL means that the film follows the main title.
+    # A refresh then does not give the film the main title of TMDB, and
+    # tmdb_main_title holds that title. NULL means that the film follows
+    # the main title.
 
     chosen_title = db.Column(db.String(220))
 
@@ -676,6 +684,7 @@ class Movie(db.Model, TMDBMixin):
         ("tmdb_status", "status"),
         ("tmdb_tagline", "tagline"),
         ("tmdb_title", "title"),
+        ("tmdb_main_title", "title"),
         ("tmdb_video", "video"),
         ("tmdb_vote_average", "vote_average"),
         ("tmdb_vote_count", "vote_count"),
@@ -1919,6 +1928,22 @@ def sort_title(text):
     test ignores the case."""
 
     return re.sub(r"^(The|A|An)\s+", "", text or "", flags=re.IGNORECASE)
+
+
+MOVIE_TITLE_COLUMNS = ("title", "tmdb_title", "tmdb_main_title")
+
+
+def movie_title_like(pattern):
+    """Return the SQL test that a title of a film matches an ILIKE pattern.
+
+    Invariant: a search finds a film by each title that the record has.
+    These are the title of the record, the title that the pages show,
+    and the main title of TMDB. A film with a selected title has the
+    main title only in tmdb_main_title."""
+
+    return db.or_(
+        *(getattr(Movie, column).ilike(pattern) for column in MOVIE_TITLE_COLUMNS)
+    )
 
 
 def title_sort(model, tmdb=True):

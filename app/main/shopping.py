@@ -35,6 +35,8 @@ from app.models import (
     User,
     UserMovieReview,
     UserWatchlist,
+    MOVIE_TITLE_COLUMNS,
+    movie_title_like,
     sort_title,
     title_sort,
 )
@@ -310,7 +312,9 @@ def watchlist_search_matcher(q):
             position = found + len(word)
         return True
 
-    return lambda movie: matches_text(movie.tmdb_title) or matches_text(movie.title)
+    return lambda movie: any(
+        matches_text(getattr(movie, column)) for column in MOVIE_TITLE_COLUMNS
+    )
 
 
 @bp.route("/shopping-list/movie", methods=["GET", "POST"])
@@ -727,12 +731,7 @@ def movie_shopping():
             # searches. Thus, "spider man" finds "Spider-Man".
 
             pattern = q.replace(" ", "%")
-            movies = search_rows(
-                db.or_(
-                    Movie.title.ilike(f"%{pattern}%"),
-                    Movie.tmdb_title.ilike(f"%{pattern}%"),
-                )
-            )
+            movies = search_rows(movie_title_like(f"%{pattern}%"))
 
     elif library == "watchlist":
         # This is the watchlist view. It is cross-user and ranked

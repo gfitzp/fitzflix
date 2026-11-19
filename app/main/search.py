@@ -19,7 +19,15 @@ from flask import (
 from flask_login import current_user, login_required
 
 from app import db
-from app.models import File, Movie, RefQuality, TMDBCredit, TVSeries, UserMovieReview
+from app.models import (
+    File,
+    Movie,
+    RefQuality,
+    TMDBCredit,
+    TVSeries,
+    UserMovieReview,
+    movie_title_like,
+)
 from app.main import bp
 from app.media.file_ranking import MOVIE_BEST_ORDER, copy_upgradable, season_grades
 from app.metadata.tmdb_apply import tmdb_json
@@ -89,30 +97,15 @@ def _movie_search_results(wildcard, limit=PAGE_RESULTS, years=None):
     # CONTAIN it. Then the film named Up never shows.
 
     match_rank = db.case(
-        (
-            db.or_(
-                Movie.title.ilike(wildcard),
-                Movie.tmdb_title.ilike(wildcard),
-            ),
-            0,
-        ),
-        (
-            db.or_(
-                Movie.title.ilike(f"{wildcard}%"),
-                Movie.tmdb_title.ilike(f"{wildcard}%"),
-            ),
-            1,
-        ),
+        (movie_title_like(wildcard), 0),
+        (movie_title_like(f"{wildcard}%"), 1),
         else_=2,
     )
 
     results = []
-    query = Movie.query.filter(
-        db.or_(
-            Movie.title.ilike(f"%{wildcard}%"),
-            Movie.tmdb_title.ilike(f"%{wildcard}%"),
-        )
-    ).filter(Movie.files.any(File.feature_type_id.is_(None)))
+    query = Movie.query.filter(movie_title_like(f"%{wildcard}%")).filter(
+        Movie.files.any(File.feature_type_id.is_(None))
+    )
 
     # A y: modifier matches each of the 2 years of a film. These
     # are the library identity year and the TMDB release year. The 2
