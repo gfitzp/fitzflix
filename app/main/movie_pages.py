@@ -851,8 +851,10 @@ def movie_title(movie_id):
 
     A film can have 2 records with the same TMDB id until a refresh
     merges them. A record of the same film that has the title does not
-    refuse it. The selection goes to each record of the film, and the
-    refresh that the page queues merges the records."""
+    refuse it. The selection goes to each record of the film. The
+    refresh of a younger record merges that record into the oldest
+    record. Thus, a younger record that has the title is refreshed
+    first. In each other case the page refreshes its own record."""
 
     movie = Movie.query.filter_by(id=movie_id).first_or_404()
     title = movie.display_title

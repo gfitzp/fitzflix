@@ -1193,16 +1193,18 @@ def _apply_movie_refresh(
         db.session.delete(original_movie_record)
 
         # The record that goes held the name of the survivor until
-        # this delete. A second refresh gives the survivor the name.
-        # Only a merge queues it, and a merge deletes 1 record. Thus,
-        # it cannot repeat.
+        # this delete. A second apply of the same payload gives the
+        # survivor the name. It asks TMDB for nothing. Thus, a TMDB
+        # outage cannot stop it. Only a merge queues it, and a merge
+        # deletes 1 record. Thus, it cannot repeat.
 
         if waits_for_the_name:
             enqueue_task(
-                "app.metadata.tmdb_refresh.refresh_tmdb_info",
-                MOVIES,
-                movie.id,
-                movie.tmdb_id,
+                "app.metadata.tmdb_refresh.apply_tmdb_refresh",
+                library=MOVIES,
+                id=movie.id,
+                tmdb_id=movie.tmdb_id,
+                tmdb_payload=tmdb_payload,
                 description=(
                     f"Refreshing TMDB data for '{movie.title} ({movie.year})' "
                     f"after its merge"

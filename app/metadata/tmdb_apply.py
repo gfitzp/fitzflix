@@ -715,7 +715,7 @@ class TMDBMixin(object):
 
         leaving is the record that a merge deletes after this apply.
         That record can hold the name of this movie. Then the merge
-        queues the refresh that gives this movie the name."""
+        queues the second apply that gives this movie the name."""
 
         from app.models import Movie, MovieCast, MovieCrew
 

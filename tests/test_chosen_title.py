@@ -328,8 +328,28 @@ def on_disk(app, file):
     return path
 
 
+def second_applies(app):
+    """Return the applies that a merge queued, and no fetch is among the jobs."""
+
+    assert [
+        job
+        for queue in (app.request_queue, app.sql_queue)
+        for job in queue.jobs
+        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
+    ] == []
+    return [
+        job.kwargs
+        for job in app.sql_queue.jobs
+        if job.func_name == "app.metadata.tmdb_refresh.apply_tmdb_refresh"
+    ]
+
+
+def second_apply_targets(app):
+    return [(job["library"], job["id"], job["tmdb_id"]) for job in second_applies(app)]
+
+
 def test_a_merge_gives_the_survivor_the_selection(app):
-    """The record that goes holds the name until its delete. A second refresh ends the rename."""
+    """The record that goes holds the name until its delete. A second apply ends the rename."""
 
     from datetime import datetime
 
@@ -360,21 +380,11 @@ def test_a_merge_gives_the_survivor_the_selection(app):
         assert kept.chosen_title == STREAMING
         assert db.session.get(File, file_id).movie_id == survivor_id
 
-        def queued():
-            return [
-                job.args
-                for job in app.request_queue.jobs
-                if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
-            ]
+        assert second_apply_targets(app) == [("Movies", survivor_id, TMDB_ID)]
 
-        assert queued() == [("Movies", survivor_id, TMDB_ID)]
-
-        assert (
-            apply_tmdb_refresh(
-                "Movies", survivor_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
-            )
-            is True
-        )
+        # The second apply has the payload of the first. It asks TMDB
+        # for nothing.
+        assert apply_tmdb_refresh(**second_applies(app)[0]) is True
         db.session.expire_all()
         kept = db.session.get(Movie, survivor_id)
         assert (kept.title, kept.tmdb_title, kept.chosen_title) == (STREAMING,) * 3
@@ -382,8 +392,8 @@ def test_a_merge_gives_the_survivor_the_selection(app):
         assert row.file_path.startswith(f"Movies/{STREAMING} (2019)/")
         assert os.path.exists(os.path.join(app.config["LIBRARY_DIR"], row.file_path))
         assert not os.path.exists(path) or path.endswith(row.file_path)
-        # The second refresh is not a merge. It queues nothing more.
-        assert len(queued()) == 1
+        # The second apply is not a merge. It queues nothing more.
+        assert len(second_applies(app)) == 1
 
 
 def test_a_rematch_does_not_carry_the_selection_of_an_other_film(app):
@@ -471,12 +481,8 @@ def test_a_survivor_keeps_its_own_selection(app):
         kept = db.session.get(Movie, survivor_id)
         assert (kept.title, kept.chosen_title) == (STREAMING, STREAMING)
 
-        # The survivor has the name already. Thus, no second refresh.
-        assert [
-            job
-            for job in app.request_queue.jobs
-            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
-        ] == []
+        # The survivor has the name already. Thus, no second apply.
+        assert second_applies(app) == []
 
 
 def test_a_new_tmdb_id_locks_the_name_of_the_new_film(app, held_lock):
@@ -505,7 +511,7 @@ def test_a_new_tmdb_id_locks_the_name_of_the_new_film(app, held_lock):
         assert (row.title, row.chosen_title) == ("Gamma Alt", "Gamma Alt")
 
 
-def test_a_merge_with_no_selection_queues_no_second_refresh(app):
+def test_a_merge_with_no_selection_queues_no_second_apply(app):
     from datetime import datetime
 
     from app.metadata.tmdb_refresh import apply_tmdb_refresh
@@ -526,11 +532,7 @@ def test_a_merge_with_no_selection_queues_no_second_refresh(app):
         )
         db.session.expire_all()
         assert db.session.get(Movie, newer_id) is None
-        assert [
-            job
-            for job in app.request_queue.jobs
-            if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
-        ] == []
+        assert second_applies(app) == []
 
 
 def test_a_file_with_the_selected_title_goes_to_the_film_with_the_selection(
@@ -1384,14 +1386,6 @@ def mails(monkeypatch):
     return sent
 
 
-def after_merge_jobs(app):
-    return [
-        job.args
-        for job in app.request_queue.jobs
-        if job.func_name == "app.metadata.tmdb_refresh.refresh_tmdb_info"
-    ]
-
-
 def test_the_older_record_of_the_film_can_have_the_selected_title(
     app, admin_client, titles
 ):
@@ -1517,7 +1511,7 @@ def test_a_record_of_another_film_that_has_the_title_refuses(
 
 
 def test_a_merge_sends_no_mail_about_the_record_that_it_deletes(app, mails):
-    """The record that goes has the name. A second refresh gives it to the survivor."""
+    """The record that goes has the name. A second apply gives it to the survivor."""
 
     from app.metadata.tmdb_refresh import apply_tmdb_refresh
     from app.models import Movie
@@ -1535,19 +1529,14 @@ def test_a_merge_sends_no_mail_about_the_record_that_it_deletes(app, mails):
         db.session.expire_all()
         assert db.session.get(Movie, younger_id) is None
         assert mails == []
-        assert after_merge_jobs(app) == [("Movies", older_id, TMDB_ID)]
+        assert second_apply_targets(app) == [("Movies", older_id, TMDB_ID)]
 
-        assert (
-            apply_tmdb_refresh(
-                "Movies", older_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
-            )
-            is True
-        )
+        assert apply_tmdb_refresh(**second_applies(app)[0]) is True
         db.session.expire_all()
         kept = db.session.get(Movie, older_id)
         assert (kept.title, kept.chosen_title) == (STREAMING, STREAMING)
         assert mails == []
-        assert len(after_merge_jobs(app)) == 1
+        assert len(second_applies(app)) == 1
 
 
 def test_a_merge_gives_the_survivor_the_tmdb_title_of_the_record_that_goes(app, mails):
@@ -1571,27 +1560,20 @@ def test_a_merge_gives_the_survivor_the_tmdb_title_of_the_record_that_goes(app, 
         assert db.session.get(Movie, younger_id) is None
         assert db.session.get(Movie, older_id).title == "Older Record"
         assert mails == []
-        assert after_merge_jobs(app) == [("Movies", older_id, TMDB_ID)]
+        assert second_apply_targets(app) == [("Movies", older_id, TMDB_ID)]
 
-        assert (
-            apply_tmdb_refresh(
-                "Movies", older_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
-            )
-            is True
-        )
+        assert apply_tmdb_refresh(**second_applies(app)[0]) is True
         db.session.expire_all()
         assert db.session.get(Movie, older_id).title == MAIN
         row = db.session.get(File, file_id)
         assert row.movie_id == older_id
         assert os.path.exists(os.path.join(app.config["LIBRARY_DIR"], row.file_path))
         assert mails == []
-        assert len(after_merge_jobs(app)) == 1
+        assert len(second_applies(app)) == 1
 
 
-def test_a_third_record_that_has_the_name_gets_the_mail_and_no_second_refresh(
-    app, mails
-):
-    """The merge does not delete that record. Thus, a second refresh cannot help."""
+def test_a_third_record_that_has_the_name_gets_the_mail_and_no_second_apply(app, mails):
+    """The merge does not delete that record. Thus, a second apply cannot help."""
 
     from app.metadata.tmdb_refresh import apply_tmdb_refresh
     from app.models import Movie
@@ -1612,7 +1594,7 @@ def test_a_third_record_that_has_the_name_gets_the_mail_and_no_second_refresh(
         assert db.session.get(Movie, younger_id) is None
         assert db.session.get(Movie, older_id).title == "Older Record"
         assert mails == ["Duplicate movie detected"]
-        assert after_merge_jobs(app) == []
+        assert second_applies(app) == []
 
 
 def test_a_refresh_that_is_not_a_merge_sends_the_mail_about_the_other_record(
@@ -1635,3 +1617,29 @@ def test_a_refresh_that_is_not_a_merge_sends_the_mail_about_the_other_record(
         assert db.session.get(Movie, younger_id) is not None
         assert db.session.get(Movie, older_id).title == "Older Record"
         assert mails == ["Duplicate movie detected"]
+
+
+def test_a_record_that_goes_with_the_title_and_an_other_year_does_not_hold_the_name(
+    app, mails
+):
+    """The title and the year together are the name. The survivor takes it at once."""
+
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+    from app.models import Movie
+
+    with app.app_context():
+        older_id, younger_id = two_records("Older Record", MAIN)
+        db.session.get(Movie, younger_id).year = 2018
+        db.session.commit()
+        assert (
+            apply_tmdb_refresh(
+                "Movies", younger_id, tmdb_id=TMDB_ID, tmdb_payload=packed(payload())
+            )
+            is True
+        )
+        db.session.expire_all()
+        assert db.session.get(Movie, younger_id) is None
+        kept = db.session.get(Movie, older_id)
+        assert (kept.title, kept.year) == (MAIN, 2019)
+        assert mails == []
+        assert second_applies(app) == []
