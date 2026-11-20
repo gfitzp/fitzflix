@@ -1140,3 +1140,163 @@ def test_a_merge_keeps_a_false_that_a_person_set_on_the_survivor(app):
         assert new.criterion_in_print is False
         assert new.shopping_list_exclude is False
         assert new.criterion_disc_owned is True
+
+
+def _series_of_an_old_id(title, tmdb_id):
+    """Return a series that has the cast, the links and the fields of a TMDB id."""
+
+    from datetime import date
+
+    from app.models import TMDBCredit, TMDBNetwork, TVCast
+
+    series = make_tv_series(title, tmdb_id=tmdb_id)
+    series.tmdb_content_rating = "TV-Y"
+    series.tmdb_first_air_date = date(1993, 9, 11)
+    series.tvdb_id = 77976
+    series.genres.append(TMDBGenre(id=tmdb_id + 10, name="Animation"))
+    series.networks.append(TMDBNetwork(id=tmdb_id + 20, name="FOX"))
+    db.session.add(TMDBCredit(id=tmdb_id + 30, name="Voice Of The Old Series"))
+    db.session.add(TVCast(tv_id=series.id, credit_id=tmdb_id + 30, character="Dog"))
+    db.session.commit()
+    return series
+
+
+def test_a_series_with_a_new_tmdb_id_keeps_no_data_of_the_old_id(app):
+    """The data of a record comes from the TMDB id that the record has (#780).
+
+    The entry of the new id has no cast, no networks, no rating and no
+    date. Thus, an apply that keeps a stored value keeps a value of the
+    old series."""
+
+    from app.models import TVCast
+
+    with app.app_context():
+        series = _series_of_an_old_id("Rematched Shorts", 780001)
+        series.tmdb_tv_apply(
+            {
+                "id": 780002,
+                "name": "Rematched Shorts",
+                "genres": [{"id": 780016, "name": "Comedy"}],
+                "networks": [],
+                "aggregate_credits": {"cast": [], "crew": []},
+                "content_ratings": {"results": []},
+                "external_ids": {"imdb_id": "tt7800002"},
+            }
+        )
+        db.session.commit()
+
+        stored = db.session.get(TVSeries, series.id)
+        assert stored.tmdb_id == 780002
+        assert TVCast.query.filter_by(tv_id=stored.id).count() == 0
+        assert stored.networks.count() == 0
+        assert [genre.name for genre in stored.genres] == ["Comedy"]
+        assert stored.tmdb_content_rating is None
+        assert stored.tmdb_first_air_date is None
+        assert stored.tvdb_id is None
+        assert stored.imdb_id == "tt7800002"
+        assert stored.tmdb_ignored is False
+
+
+def test_a_series_refresh_of_the_same_id_keeps_the_stored_rows(app):
+    """An empty list of the same TMDB id deletes nothing (#780).
+
+    The rule for a new id must not end the rule for a bad answer."""
+
+    from app.models import TVCast
+
+    with app.app_context():
+        series = _series_of_an_old_id("Refreshed Series", 780101)
+        series.tmdb_tv_apply(
+            {
+                "id": 780101,
+                "name": "Refreshed Series",
+                "genres": [],
+                "networks": [],
+                "aggregate_credits": {"cast": [], "crew": []},
+                "content_ratings": {"results": []},
+            }
+        )
+        db.session.commit()
+
+        stored = db.session.get(TVSeries, series.id)
+        assert TVCast.query.filter_by(tv_id=stored.id).count() == 1
+        assert [network.name for network in stored.networks] == ["FOX"]
+        assert [genre.name for genre in stored.genres] == ["Animation"]
+        assert stored.tmdb_content_rating == "TV-Y"
+        assert stored.tmdb_first_air_date is not None
+
+
+def test_a_film_with_a_new_tmdb_id_keeps_no_data_of_the_old_id(app):
+    """The rule of #780 for a film.
+
+    The entry of the new id has no keywords, no credits and no release
+    date."""
+
+    from datetime import date
+
+    from app.models import MovieCast, TMDBCredit
+
+    with app.app_context():
+        movie = make_movie("Wrong Film", 1993, tmdb_id=780201)
+        movie.tmdb_release_date = date(1993, 9, 11)
+        movie.genres.append(TMDBGenre(id=780211, name="Western"))
+        movie.keywords.append(TMDBKeyword(id=780212, name="old keyword"))
+        db.session.add(TMDBCredit(id=780213, name="Star Of The Old Film"))
+        db.session.add(MovieCast(movie_id=movie.id, credit_id=780213, character="Hero"))
+        db.session.commit()
+
+        movie.tmdb_movie_apply(
+            {
+                "id": 780202,
+                "title": "Right Film",
+                "genres": [{"id": 780214, "name": "Drama"}],
+                "keywords": {"keywords": []},
+                "credits": {"cast": [], "crew": []},
+            }
+        )
+        db.session.commit()
+
+        stored = db.session.get(Movie, movie.id)
+        assert stored.tmdb_id == 780202
+        assert stored.tmdb_title == "Right Film"
+        assert MovieCast.query.filter_by(movie_id=stored.id).count() == 0
+        assert stored.keywords.count() == 0
+        assert [genre.name for genre in stored.genres] == ["Drama"]
+        assert stored.tmdb_release_date is None
+        assert stored.tmdb_ignored is False
+
+
+def test_a_typed_id_gives_a_series_only_the_data_of_that_id(app):
+    """The refresh task applies the rule of #780 for an id that a person typed."""
+
+    import json
+    import zlib
+
+    from app.models import TV_SHOWS, TVCast
+    from app.metadata.tmdb_refresh import apply_tmdb_refresh
+
+    with app.app_context():
+        series_id = _series_of_an_old_id("Typed Id Series", 780301).id
+
+    payload = zlib.compress(
+        json.dumps(
+            {
+                "id": 780302,
+                "name": "Typed Id Series",
+                "networks": [],
+                "aggregate_credits": {"cast": [], "crew": []},
+            }
+        ).encode()
+    )
+    assert (
+        apply_tmdb_refresh(
+            TV_SHOWS, series_id, tmdb_id=780302, tmdb_payload=payload, rematch=True
+        )
+        is True
+    )
+    with app.app_context():
+        stored = db.session.get(TVSeries, series_id)
+        assert stored.tmdb_id == 780302
+        assert TVCast.query.filter_by(tv_id=series_id).count() == 0
+        assert stored.networks.count() == 0
+        assert stored.tmdb_ignored is False

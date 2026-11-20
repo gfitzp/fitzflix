@@ -631,6 +631,29 @@ class TMDBMixin(object):
             setattr(self, column, None)
         self.tmdb_ignored = True
 
+    def _drop_the_data_of_an_other_id(self, tmdb_info, clear):
+        """Clear this record when the payload is of a different TMDB id.
+
+        Invariant: each TMDB field, link and credit of a record comes
+        from the TMDB id that the record has. An admin can match a
+        record to a different id. An apply keeps a stored value when
+        the payload has none. That rule is for a bad answer about the
+        same title. For a different id, the stored value is of a
+        different title. Thus, each apply calls this first, and the
+        record starts empty. clear is the detach method of the record.
+        The record does not become detached."""
+
+        new_id = tmdb_info.get("id")
+        if not self.tmdb_id or not new_id or new_id == self.tmdb_id:
+            return
+        current_app.logger.info(
+            f"{self} The stored TMDB data is of TMDB id {self.tmdb_id}. It "
+            f"goes, and the record gets the data of TMDB id {new_id}"
+        )
+        detached = self.tmdb_ignored
+        clear()
+        self.tmdb_ignored = detached
+
     def tmdb_movie_fetch(self, tmdb_id=None):
         """Do the network half of a TMDB movie refresh.
 
@@ -723,6 +746,7 @@ class TMDBMixin(object):
             return self
 
         self.drop_the_selection_of_an_other_film(tmdb_info)
+        self._drop_the_data_of_an_other_id(tmdb_info, self.tmdb_movie_clear)
         self._apply_scalars(tmdb_info)
 
         # A title that an admin selected stays while TMDB lists it. A
@@ -943,6 +967,7 @@ class TMDBMixin(object):
         if not tmdb_info:
             return self
 
+        self._drop_the_data_of_an_other_id(tmdb_info, self.tmdb_tv_clear)
         self._apply_scalars(tmdb_info)
         # A finished run has final counts. TMDB marks it Ended or Canceled.
         # A running series keeps no counts. A series that runs
