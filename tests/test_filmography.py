@@ -677,3 +677,56 @@ def test_movie_page_cast_scroller_shows_all_credited_actors(app, admin_client):
         'Directed by <a href="/library/movie?credit=700100" '
         'class="link-secondary text-secondary">Ensemble Director</a>' in page
     )
+
+
+def test_the_page_of_a_person_shows_a_series_that_the_person_made(
+    app, admin_client, monkeypatch
+):
+    """A created series is in the series rows, with the role Creator first.
+
+    TMDB lists it in the crew credits of the person, with the job
+    Creator. A job that is no key role still drops out."""
+
+    fake_tmdb_get = tmdb_router(
+        {
+            "/person/575757/tv_credits": {
+                "cast": [],
+                "crew": [
+                    {
+                        "id": 9501,
+                        "name": "Created Show",
+                        "job": "Writer",
+                        "department": "Writing",
+                    },
+                    {
+                        "id": 9501,
+                        "name": "Created Show",
+                        "job": "Creator",
+                        "department": "Creator",
+                    },
+                    {
+                        "id": 9502,
+                        "name": "Only Created Show",
+                        "job": "Creator",
+                        "department": "Creator",
+                    },
+                    {
+                        "id": 9503,
+                        "name": "Gaffed Show",
+                        "job": "Gaffer",
+                        "department": "Lighting",
+                    },
+                ],
+            },
+            "/movie_credits": {"cast": []},
+        },
+        default={"name": "Series Maker"},
+    )
+    monkeypatch.setitem(app.config, "TMDB_API_KEY", "test-key")
+    monkeypatch.setattr("app.metadata.tmdb_apply.tmdb_get", fake_tmdb_get)
+
+    page = admin_client.get("/library/movie?credit=575757").get_data(as_text=True)
+    assert "Created Show" in page
+    assert "Creator &middot; Writer" in page
+    assert "Only Created Show" in page
+    assert "Gaffed Show" not in page

@@ -32,7 +32,7 @@ from werkzeug.local import LocalProxy
 
 from app import db, get_app
 from app.models import Movie, User
-from app.metadata.tmdb_apply import tmdb_json_or
+from app.metadata.tmdb_apply import CREATOR_JOB, tmdb_json_or
 from app.discovery.recommendations import (
     CREW_ROLE_JOBS,
     JOB_TO_CLASS,
@@ -141,7 +141,8 @@ def person_tv_credits(person_id):
     """Return {"cast": [...], "crew": [...]} of the TV career of 1 person, or None.
 
     The self roles and the crew jobs outside the key roles drop out.
-    None means a transient TMDB error. Nothing is cached then. The
+    The creator is a key role of a series, and TMDB lists it as a crew
+    job. None means a transient TMDB error. Nothing is cached then. The
     filmography renders without the TV rows."""
 
     def fetch():
@@ -157,7 +158,7 @@ def person_tv_credits(person_id):
             "crew": [
                 entry
                 for entry in payload.get("crew") or []
-                if entry.get("job") in JOB_TO_CLASS
+                if entry.get("job") in JOB_TO_CLASS or entry.get("job") == CREATOR_JOB
             ],
         }, True
 
