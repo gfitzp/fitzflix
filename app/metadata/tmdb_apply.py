@@ -35,6 +35,14 @@ def _clear_links(links):
 
 PEOPLE_RANKING_KEY = "fitzflix:people:ranked:{role}"
 
+# TMDB names the creators of a series in the created_by list of the
+# series, not in its crew. A creator gets a crew row with this
+# department and this job. TMDB uses the same pair in the series
+# credits of a person.
+
+CREATOR_DEPARTMENT = "Creator"
+CREATOR_JOB = "Creator"
+
 # The cache life of the /people ranking. This is a backstop. The
 # credit writers invalidate the cache directly.
 
@@ -1037,11 +1045,18 @@ class TMDBMixin(object):
                 current_app.logger.warning(
                     f"{self} TMDB payload carries no cast; keeping the stored rows"
                 )
-            if (
-                aggregate.get("crew")
-                or TVCrew.query.filter_by(tv_id=self.id).count() == 0
-            ):
-                TVCrew.query.filter_by(tv_id=self.id).delete()
+            # The creator rows come from a different list of the
+            # payload. Thus, the crew rule does not count them, and a
+            # crew list does not delete them.
+
+            other_crew = TVCrew.query.filter_by(tv_id=self.id).filter(
+                db.or_(
+                    TVCrew.department.is_(None),
+                    TVCrew.department != CREATOR_DEPARTMENT,
+                )
+            )
+            if aggregate.get("crew") or other_crew.count() == 0:
+                other_crew.delete()
             else:
                 current_app.logger.warning(
                     f"{self} TMDB payload carries no crew; keeping the stored rows"
@@ -1073,6 +1088,10 @@ class TMDBMixin(object):
             for person in tmdb_objects(aggregate.get("crew"), self, "crew"):
                 p = _tmdb_credit(person)
 
+                # The created_by list is the one source of this department.
+
+                if person.get("department") == CREATOR_DEPARTMENT:
+                    continue
                 for job in tmdb_objects(
                     person.get("jobs"), self, f"crew {person.get('id')} job"
                 ):
@@ -1092,7 +1111,41 @@ class TMDBMixin(object):
                         )
                     )
 
+        self._apply_creators(tmdb_info)
         return self
+
+    def _apply_creators(self, tmdb_info):
+        """Replace the creator rows of this series from the created_by list.
+
+        The list has the rule of each list of the payload: an empty
+        list, or a payload with no list, deletes nothing. A person in
+        the list 2 times gets 1 row."""
+
+        from app.models import TVCrew
+
+        creators = {}
+        for person in tmdb_objects(tmdb_info.get("created_by"), self, "creator"):
+            if person.get("id") is not None:
+                creators.setdefault(person.get("id"), person)
+        stored = TVCrew.query.filter_by(tv_id=self.id, department=CREATOR_DEPARTMENT)
+        if not creators:
+            if "created_by" in tmdb_info and stored.count():
+                current_app.logger.warning(
+                    f"{self} TMDB payload carries no creators; keeping the "
+                    f"stored rows"
+                )
+            return
+        stored.delete()
+        for person in creators.values():
+            db.session.add(
+                TVCrew(
+                    tv_id=self.id,
+                    credit_id=_tmdb_credit(person).id,
+                    department=CREATOR_DEPARTMENT,
+                    job=CREATOR_JOB,
+                )
+            )
+        invalidate_people_ranking()
 
     def tmdb_tv_clear(self):
         """Detach this series from TMDB. See tmdb_movie_clear."""

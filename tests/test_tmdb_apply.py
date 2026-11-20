@@ -1300,3 +1300,167 @@ def test_a_typed_id_gives_a_series_only_the_data_of_that_id(app):
         assert TVCast.query.filter_by(tv_id=series_id).count() == 0
         assert stored.networks.count() == 0
         assert stored.tmdb_ignored is False
+
+
+def _creator_payload(tmdb_id, creators, crew):
+    """Return a series payload with a creator list and a crew list."""
+
+    return {
+        "id": tmdb_id,
+        "name": "Created Series",
+        "created_by": [
+            {"id": person_id, "name": name, "profile_path": f"/{person_id}.jpg"}
+            for person_id, name in creators
+        ],
+        "aggregate_credits": {
+            "cast": [],
+            "crew": [
+                {
+                    "id": person_id,
+                    "name": name,
+                    "department": department,
+                    "jobs": [{"job": job, "episode_count": 3}],
+                }
+                for person_id, name, department, job in crew
+            ],
+        },
+    }
+
+
+def _crew_rows(series_id):
+    from app.models import TVCrew
+
+    return sorted(
+        (row.credit_id, row.department, row.job)
+        for row in TVCrew.query.filter_by(tv_id=series_id)
+    )
+
+
+def test_a_series_apply_stores_the_creators(app):
+    """The creators of a series come from the created_by list of TMDB.
+
+    TMDB does not list a creator in the crew of the series. Thus, a
+    creator gets a crew row of the department Creator. A person in
+    the list 2 times gets 1 row."""
+
+    from app.models import TMDBCredit
+
+    with app.app_context():
+        series = make_tv_series("Created Series", tmdb_id=790001)
+        db.session.commit()
+        series.tmdb_tv_apply(
+            _creator_payload(
+                790001,
+                [(790011, "First Creator"), (790011, "First Creator")],
+                [(790012, "Staff Writer", "Writing", "Writer")],
+            )
+        )
+        db.session.commit()
+
+        assert _crew_rows(series.id) == [
+            (790011, "Creator", "Creator"),
+            (790012, "Writing", "Writer"),
+        ]
+        assert db.session.get(TMDBCredit, 790011).name == "First Creator"
+
+
+def test_a_new_creator_list_replaces_the_stored_creators(app):
+    """A list with entries replaces the creators and keeps the other crew rows."""
+
+    with app.app_context():
+        series = make_tv_series("Recreated Series", tmdb_id=790101)
+        db.session.commit()
+        crew = [(790112, "Staff Writer", "Writing", "Writer")]
+        series.tmdb_tv_apply(_creator_payload(790101, [(790111, "Old Creator")], crew))
+        db.session.commit()
+        series.tmdb_tv_apply(_creator_payload(790101, [(790113, "New Creator")], crew))
+        db.session.commit()
+
+        assert _crew_rows(series.id) == [
+            (790112, "Writing", "Writer"),
+            (790113, "Creator", "Creator"),
+        ]
+
+
+def test_an_empty_creator_list_keeps_the_stored_creators(app):
+    """The creators have the rule of each list: an empty list deletes nothing.
+
+    The crew of the same payload is replaced. The creators stay. A
+    payload with no created_by key keeps them too."""
+
+    with app.app_context():
+        series = make_tv_series("Glitched Creators", tmdb_id=790201)
+        db.session.commit()
+        series.tmdb_tv_apply(
+            _creator_payload(
+                790201,
+                [(790211, "Kept Creator")],
+                [(790212, "Old Writer", "Writing", "Writer")],
+            )
+        )
+        db.session.commit()
+
+        series.tmdb_tv_apply(
+            _creator_payload(790201, [], [(790213, "New Writer", "Writing", "Writer")])
+        )
+        db.session.commit()
+        assert _crew_rows(series.id) == [
+            (790211, "Creator", "Creator"),
+            (790213, "Writing", "Writer"),
+        ]
+
+        partial = _creator_payload(790201, [], [])
+        del partial["created_by"]
+        series.tmdb_tv_apply(partial)
+        db.session.commit()
+        assert (790211, "Creator", "Creator") in _crew_rows(series.id)
+
+
+def test_an_empty_crew_list_keeps_the_crew_and_takes_the_new_creators(app):
+    """The crew rule does not count the creators, and it does not delete them.
+
+    A series with creators and no other crew still takes a crew list.
+    An empty crew list keeps the stored crew, and the creators of the
+    same payload still replace the stored creators."""
+
+    with app.app_context():
+        series = make_tv_series("Creators First", tmdb_id=790301)
+        db.session.commit()
+        series.tmdb_tv_apply(_creator_payload(790301, [(790311, "Creator A")], []))
+        db.session.commit()
+        assert _crew_rows(series.id) == [(790311, "Creator", "Creator")]
+
+        series.tmdb_tv_apply(
+            _creator_payload(
+                790301,
+                [(790311, "Creator A")],
+                [(790312, "Staff Writer", "Writing", "Writer")],
+            )
+        )
+        db.session.commit()
+        series.tmdb_tv_apply(_creator_payload(790301, [(790313, "Creator B")], []))
+        db.session.commit()
+        assert _crew_rows(series.id) == [
+            (790312, "Writing", "Writer"),
+            (790313, "Creator", "Creator"),
+        ]
+
+
+def test_a_creator_write_invalidates_the_people_ranking(app):
+    """The people ranking counts the creators. Thus, a new list clears it."""
+
+    from app.metadata.tmdb_apply import PEOPLE_RANKING_KEY
+
+    with app.app_context():
+        series = make_tv_series("Ranked Creators", tmdb_id=790401)
+        db.session.commit()
+        for role in ("cast", "crew", "all"):
+            app.redis.set(PEOPLE_RANKING_KEY.format(role=role), "[]")
+        payload = _creator_payload(790401, [(790411, "Ranked Creator")], [])
+        del payload["aggregate_credits"]
+        series.tmdb_tv_apply(payload)
+        db.session.commit()
+        assert _crew_rows(series.id) == [(790411, "Creator", "Creator")]
+
+    for role in ("cast", "crew", "all"):
+        assert app.redis.get(PEOPLE_RANKING_KEY.format(role=role)) is None

@@ -227,7 +227,7 @@ Fitzflix can also **send alerts** about the films on your watchlist. Select this
 
 ## Browsing: people and the Criterion Collection
 
-The **People** page (Library → People) is a grid of all persons in the credits of the films in the library. You can filter the grid by cast, by crew, or by both. The default is cast. Each name links to a filmography page. This page shows the full TMDB career of the person, with library badges on the films that you own. The key crew roles (director, writer, cinematographer, composer, and editor) are first-class. They show in the search with badges for the dominant role ("Director · 41 films"). A credit line with more than one role uses the sequence of the closing credits.
+The **People** page (Library → People) is a grid of all persons in the credits of the films in the library. You can filter the grid by cast, by crew, or by both. The default is cast. Each name links to a filmography page. This page shows the full TMDB career of the person, with library badges on the films that you own. The key crew roles (director, writer, cinematographer, composer, and editor) are first-class. A series has one more key role, its creator. The key roles show in the search with badges for the dominant role ("Director · 41 films"). A credit line with more than one role uses the sequence of the closing credits.
 
 The **TV library** page has its own search. It searches this library only. It matches the title of a series and the name that TMDB gives the series. It does not search the titles of episodes.
 

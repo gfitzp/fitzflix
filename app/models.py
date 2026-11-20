@@ -1764,7 +1764,8 @@ class TVCrew(db.Model):
     """A join row for the crew role of a credit on a TV series.
 
     The data comes from the TMDB aggregate credits. There is one row per
-    distinct job."""
+    distinct job. A creator of the series has a row of the department
+    Creator. That row comes from the created_by list of the series."""
 
     id = db.Column(db.Integer, primary_key=True)
     tv_id = db.Column(db.Integer, db.ForeignKey("tv_series.id"))

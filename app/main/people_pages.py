@@ -22,6 +22,7 @@ from app.main import bp
 from app.media.file_ranking import best_copy_key, ranked_movie_files
 from app.cache import cached_fetch
 from app.metadata.tmdb_apply import (
+    CREATOR_JOB,
     PEOPLE_RANKING_SECONDS,
     tmdb_json_or,
     PEOPLE_RANKING_KEY,
@@ -50,12 +51,24 @@ from app.discovery.estimate_warm import person_tv_credits
 
 CREW_ROLE_LABELS = {job: role.capitalize() for job, role in JOB_TO_CLASS.items()}
 
+# A series has 1 more key role: its creator. The key roles of a film do
+# not change. TMDB also has a Creator job in the crew of some films.
+
+SERIES_ROLE_LABELS = {**CREW_ROLE_LABELS, CREATOR_JOB: "Creator"}
+
 
 # A multi-role credit line reads in the conventional closing-credit
-# order (directed, written, shot, edited, scored), not in the TMDB
-# payload order.
+# order (created, directed, written, shot, edited, scored), not in the
+# TMDB payload order.
 
-CLOSING_CREDIT_ORDER = ("Director", "Writer", "Cinematographer", "Editor", "Composer")
+CLOSING_CREDIT_ORDER = (
+    "Creator",
+    "Director",
+    "Writer",
+    "Cinematographer",
+    "Editor",
+    "Composer",
+)
 
 
 # The TMDB person details of the person pages, cached in Redis. The
@@ -139,7 +152,9 @@ def _person_bio(details):
     }
 
 
-def merge_credit_rows(credits, local_by_tmdb_id, title_key, date_key):
+def merge_credit_rows(
+    credits, local_by_tmdb_id, title_key, date_key, labels=CREW_ROLE_LABELS
+):
     """Return {tmdb id: row} with 1 row per title of a TMDB credits payload.
 
     credits is {"cast": [...], "crew": [...]}. The cast and crew
@@ -147,8 +162,10 @@ def merge_credit_rows(credits, local_by_tmdb_id, title_key, date_key):
     the key crew jobs read in the closing-credit order. title_key and
     date_key name the title and the date fields ("title" and
     "release_date" for a film, "name" and "first_air_date" for a
-    series). row["local"] is the entry of local_by_tmdb_id for the
-    title, or None. The rows keep the order of the credits."""
+    series). labels has the key jobs and their role names. A series
+    has the creator in addition (SERIES_ROLE_LABELS). row["local"] is
+    the entry of local_by_tmdb_id for the title, or None. The rows keep
+    the order of the credits."""
 
     rows = {}
 
@@ -183,7 +200,7 @@ def merge_credit_rows(credits, local_by_tmdb_id, title_key, date_key):
         if entry.get("id") is None:
             continue
         row = row_for(entry)
-        label = CREW_ROLE_LABELS.get(entry.get("job"))
+        label = labels.get(entry.get("job"))
         if label and label not in row["jobs"]:
             row["jobs"].append(label)
     for row in rows.values():
@@ -414,7 +431,13 @@ def _filmography(credit, library_only=False):
             )
         }
 
-        tv_rows = merge_credit_rows(tv_credits, local_series, "name", "first_air_date")
+        tv_rows = merge_credit_rows(
+            tv_credits,
+            local_series,
+            "name",
+            "first_air_date",
+            labels=SERIES_ROLE_LABELS,
+        )
         for row in tv_rows.values():
             series = row["series"] = row.pop("local")
             row["owned"] = bool(series and series.files.count())
@@ -517,11 +540,13 @@ def people():
 
 
 # The tie-break order for the dominant role of a person. A
-# director-actor reads as Director. A bit-part-everything reads as
+# director-actor reads as Director. A creator who is also in the cast
+# of the series reads as Creator. A bit-part-everything reads as
 # Actor before the narrower crafts.
 
 ROLE_PRECEDENCE = (
     "Director",
+    "Creator",
     "Actor",
     "Cinematographer",
     "Composer",
@@ -694,7 +719,7 @@ def _credited_film_pairs(role="all"):
             TVCrew.credit_id.label("credit_id"),
             (-TVCrew.tv_id).label("movie_id"),
         )
-        .filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
+        .filter(TVCrew.job.in_(list(SERIES_ROLE_LABELS)))
         .filter(TVCrew.tv_id.in_(owned_series_ids))
     )
     if role == "cast":
@@ -743,10 +768,10 @@ def _dominant_roles(credit_ids):
         db.session.query(TVCrew.credit_id, TVCrew.job, TVCrew.tv_id)
         .filter(TVCrew.credit_id.in_(credit_ids))
         .filter(TVCrew.tv_id.in_(owned_series_ids))
-        .filter(TVCrew.job.in_(list(CREW_ROLE_LABELS)))
+        .filter(TVCrew.job.in_(list(SERIES_ROLE_LABELS)))
         .distinct()
     ):
-        key = (credit_id, CREW_ROLE_LABELS[job])
+        key = (credit_id, SERIES_ROLE_LABELS[job])
         crew_works.setdefault(key, set()).add(("tv", tv_id))
     for credit_id, tally in (
         db.session.query(

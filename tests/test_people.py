@@ -499,3 +499,94 @@ def test_people_ranking_pages_past_the_default_cap(app, admin_client):
     assert "Cap Person 119" in first and "Cap Person 120" not in first
     assert "Cap Person 120" in second and "Cap Person 124" in second
     assert "Cap Person 119" not in second
+
+
+def _series_creator(person_id, name, titles, department="Creator"):
+    """Make a person who has a Creator row on an owned series of each title."""
+
+    from app.models import TVCrew
+    from tests.factories import make_tv_file, make_tv_series
+
+    db.session.add(TMDBCredit(id=person_id, name=name))
+    all_series = []
+    for title in titles:
+        series = make_tv_series(title)
+        make_tv_file(series, 1, 1, "WEBDL-1080p")
+        db.session.add(
+            TVCrew(
+                tv_id=series.id,
+                credit_id=person_id,
+                department=department,
+                job="Creator",
+            )
+        )
+        all_series.append(series)
+    return all_series
+
+
+def test_the_creator_of_a_series_counts_as_key_crew(app, admin_client):
+    """A person who made 2 owned series reads as Creator with 2 titles.
+
+    The creator is a key role of a series, as the director is of a
+    film."""
+
+    from app.main.people_pages import _dominant_roles
+
+    with app.app_context():
+        _series_creator(891, "Series Maker", ["Made Series 1", "Made Series 2"])
+        db.session.commit()
+        assert _dominant_roles([891]) == {891: "Creator"}
+
+    page = admin_client.get("/search?q=series+maker").get_data(as_text=True)
+    assert "Creator &middot; 2 titles" in page
+    crew_page = admin_client.get("/people?role=crew").get_data(as_text=True)
+    assert "Series Maker" in crew_page
+
+
+def test_a_creator_who_acts_in_the_same_series_reads_as_creator(app):
+    """The tie rule puts the creator before the actor, as it does the director."""
+
+    from app.main.people_pages import _dominant_roles
+    from app.models import TVCast
+
+    with app.app_context():
+        for series in _series_creator(892, "Host Creator", ["Hosted 1", "Hosted 2"]):
+            db.session.add(TVCast(tv_id=series.id, credit_id=892, character="Host"))
+        db.session.commit()
+        assert _dominant_roles([892]) == {892: "Creator"}
+
+
+def test_a_creator_job_of_a_film_is_no_key_role(app):
+    """The Creator role is for a series. The key roles of a film do not change."""
+
+    from app.main.people_pages import _dominant_roles
+
+    with app.app_context():
+        movies = [make_owned_movie(f"Character Film {n}", 2000 + n) for n in range(2)]
+        make_crew_person(
+            893, "Character Creator", {movie: [("Crew", "Creator")] for movie in movies}
+        )
+        db.session.commit()
+        assert _dominant_roles([893]) == {}
+
+
+def test_the_series_rows_of_a_person_name_the_creator_role(app):
+    """TMDB lists a created series in the crew credits of the person.
+
+    The series rows read Creator first. The film rows have no Creator
+    role."""
+
+    from app.main.people_pages import SERIES_ROLE_LABELS, merge_credit_rows
+
+    credits = {
+        "crew": [
+            {"id": 7, "name": "Show", "job": "Writer", "department": "Writing"},
+            {"id": 7, "name": "Show", "job": "Creator", "department": "Creator"},
+        ]
+    }
+    series_rows = merge_credit_rows(
+        credits, {}, "name", "first_air_date", labels=SERIES_ROLE_LABELS
+    )
+    assert series_rows[7]["jobs"] == ["Creator", "Writer"]
+    film_rows = merge_credit_rows(credits, {}, "title", "release_date")
+    assert film_rows[7]["jobs"] == ["Writer"]
