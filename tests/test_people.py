@@ -543,8 +543,10 @@ def test_the_creator_of_a_series_counts_as_key_crew(app, admin_client):
     assert "Series Maker" in crew_page
 
 
-def test_a_creator_who_acts_in_the_same_series_reads_as_creator(app):
-    """The tie rule puts the creator before the actor, as it does the director."""
+def test_a_creator_who_acts_in_the_same_series_reads_as_actor(app):
+    """The tie rule puts the actor before the creator.
+
+    Only the director comes before the actor."""
 
     from app.main.people_pages import _dominant_roles
     from app.models import TVCast
@@ -553,7 +555,20 @@ def test_a_creator_who_acts_in_the_same_series_reads_as_creator(app):
         for series in _series_creator(892, "Host Creator", ["Hosted 1", "Hosted 2"]):
             db.session.add(TVCast(tv_id=series.id, credit_id=892, character="Host"))
         db.session.commit()
-        assert _dominant_roles([892]) == {892: "Creator"}
+        assert _dominant_roles([892]) == {892: "Actor"}
+
+
+def test_a_creator_with_more_series_than_cast_works_reads_as_creator(app):
+    """The tie rule applies only to equal counts. The larger count wins."""
+
+    from app.main.people_pages import _dominant_roles
+    from app.models import TVCast
+
+    with app.app_context():
+        made = _series_creator(894, "Mostly Maker", ["Mostly 1", "Mostly 2"])
+        db.session.add(TVCast(tv_id=made[0].id, credit_id=894, character="Guest"))
+        db.session.commit()
+        assert _dominant_roles([894]) == {894: "Creator"}
 
 
 def test_a_creator_job_of_a_film_is_no_key_role(app):

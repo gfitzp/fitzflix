@@ -540,14 +540,14 @@ def people():
 
 
 # The tie-break order for the dominant role of a person. A
-# director-actor reads as Director. A creator who is also in the cast
-# of the series reads as Creator. A bit-part-everything reads as
+# director-actor reads as Director. A creator with the same number of
+# works in the cast reads as Actor. A bit-part-everything reads as
 # Actor before the narrower crafts.
 
 ROLE_PRECEDENCE = (
     "Director",
-    "Creator",
     "Actor",
+    "Creator",
     "Cinematographer",
     "Composer",
     "Writer",
